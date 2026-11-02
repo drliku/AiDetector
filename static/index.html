@@ -1,0 +1,134 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>AiDetector</title>
+<style>
+  :root {
+    --bg: #f6f5f2; --panel: #ffffff; --text: #1d1c1a; --muted: #6b6862; --line: #e3e0da;
+    --accent: #2f6f4f; --low: #2f6f4f; --mid: #b7791f; --high: #b42318;
+  }
+  @media (prefers-color-scheme: dark) {
+    :root { --bg: #161512; --panel: #22201c; --text: #ece9e3; --muted: #9c978e; --line: #34312b;
+            --accent: #6fbf8f; --low: #6fbf8f; --mid: #e0a43c; --high: #f06a5d; }
+  }
+  * { box-sizing: border-box; }
+  body { margin: 0; background: var(--bg); color: var(--text);
+         font: 15px/1.5 system-ui, -apple-system, "Segoe UI", sans-serif; }
+  main { max-width: 900px; margin: 0 auto; padding: 32px 16px 64px; }
+  h1 { font-size: 26px; margin: 0 0 4px; }
+  .sub { color: var(--muted); margin: 0 0 24px; }
+  form { display: flex; gap: 8px; flex-wrap: wrap; }
+  input[type=text] { flex: 1 1 320px; padding: 12px 14px; font-size: 16px; border-radius: 8px;
+         border: 1px solid var(--line); background: var(--panel); color: var(--text); }
+  button { padding: 12px 20px; font-size: 16px; border: 0; border-radius: 8px;
+           background: var(--accent); color: #fff; cursor: pointer; }
+  button:disabled { opacity: .6; cursor: progress; }
+  .panel { background: var(--panel); border: 1px solid var(--line); border-radius: 10px; padding: 18px; margin-top: 18px; }
+  .score { display: flex; align-items: center; gap: 18px; flex-wrap: wrap; }
+  .big { font-size: 44px; font-weight: 700; font-variant-numeric: tabular-nums; }
+  .bar { height: 8px; background: var(--line); border-radius: 4px; overflow: hidden; }
+  .bar > span { display: block; height: 100%; }
+  .cats { display: grid; grid-template-columns: repeat(auto-fit, minmax(160px, 1fr)); gap: 12px; margin-top: 14px; }
+  .cat small { color: var(--muted); }
+  .sig { border-top: 1px solid var(--line); padding: 10px 0; }
+  .sig:first-child { border-top: 0; }
+  .sig b { display: block; }
+  .tag { font-size: 12px; color: var(--muted); text-transform: uppercase; letter-spacing: .04em; }
+  .muted { color: var(--muted); }
+  .error { color: var(--high); }
+  table { width: 100%; border-collapse: collapse; font-size: 14px; }
+  th, td { text-align: left; padding: 6px 8px; border-bottom: 1px solid var(--line); white-space: nowrap; }
+  .tablewrap { overflow-x: auto; }
+  a { color: var(--accent); }
+  ul.notes { margin: 0; padding-left: 18px; color: var(--muted); }
+</style>
+</head>
+<body>
+<main>
+  <h1>AiDetector</h1>
+  <p class="sub">Paste a Lichess username or game link. The tool looks for engine-like play, suspicious move timing,
+    sudden performance spikes and smurfing.</p>
+
+  <form id="f">
+    <input id="q" type="text" placeholder="username or https://lichess.org/abcd1234" autocomplete="off" required>
+    <button id="go">Analyse</button>
+  </form>
+
+  <div id="out"></div>
+
+  <p class="muted" style="margin-top:28px;font-size:13px">These are statistical hints, not proof. Strong players can look
+    "engine-like" in a single game. Only Lichess can see the full data needed for a fair-play ruling. Report
+    suspicions through Lichess, not in public.</p>
+</main>
+
+<script>
+const $ = (s) => document.querySelector(s);
+const esc = (s) => String(s ?? "").replace(/[&<>"']/g, c => ({"&":"&amp;","<":"&lt;",">":"&gt;",'"':"&quot;","'":"&#39;"}[c]));
+const color = (v) => v >= 70 ? "var(--high)" : v >= 40 ? "var(--mid)" : "var(--low)";
+const CATS = { engine: "Engine use", timing: "Move timing", performance: "Performance spikes",
+               smurf: "Smurfing / sandbagging", account: "Account status" };
+
+$("#f").addEventListener("submit", async (e) => {
+  e.preventDefault();
+  const btn = $("#go"); btn.disabled = true; btn.textContent = "Analysing…";
+  $("#out").innerHTML = `<div class="panel muted">Fetching games from Lichess…</div>`;
+  try {
+    const r = await fetch("/api/analyze", { method: "POST", headers: { "Content-Type": "application/json" },
+                                            body: JSON.stringify({ query: $("#q").value }) });
+    const data = await r.json();
+    if (!r.ok) throw new Error(data.detail || "Request failed");
+    render(data);
+  } catch (err) {
+    $("#out").innerHTML = `<div class="panel error">${esc(err.message)}</div>`;
+  } finally { btn.disabled = false; btn.textContent = "Analyse"; }
+});
+
+function render(d) {
+  const link = d.kind === "user" ? `https://lichess.org/@/${d.subject}` : `https://lichess.org/${d.subject}`;
+  const cats = Object.keys(CATS).map(k => {
+    const v = d.category_scores[k] ?? 0;
+    return `<div class="cat"><small>${CATS[k]}</small><div><b>${v}</b></div>
+      <div class="bar"><span style="width:${v}%;background:${color(v)}"></span></div></div>`;
+  }).join("");
+
+  const sigs = d.signals.length ? d.signals.map(s => `
+    <div class="sig"><span class="tag">${esc(CATS[s.category] || s.category)} · strength ${Math.round(s.strength * 100)}</span>
+      <b>${esc(s.title)}</b><span class="muted">${esc(s.detail)}</span>
+      ${s.game_id ? ` <a href="https://lichess.org/${esc(s.game_id)}" target="_blank" rel="noopener">view game</a>` : ""}
+    </div>`).join("") : `<p class="muted">No suspicious signals found.</p>`;
+
+  const notes = d.notes.length ? `<div class="panel"><b>Notes</b><ul class="notes">${d.notes.map(n => `<li>${esc(n)}</li>`).join("")}</ul></div>` : "";
+
+  $("#out").innerHTML = `
+    <div class="panel">
+      <div class="score">
+        <div class="big" style="color:${color(d.score)}">${d.score}</div>
+        <div><b>${esc(d.verdict)}</b><br>
+          <span class="muted">${d.kind === "user" ? "Player" : "Game"} <a href="${link}" target="_blank" rel="noopener">${esc(d.subject)}</a></span></div>
+      </div>
+      <div class="cats">${cats}</div>
+    </div>
+    <div class="panel"><b>Signals</b>${sigs}</div>
+    ${notes}
+    ${gamesTable(d.games)}`;
+}
+
+function gamesTable(games) {
+  if (!games?.length) return "";
+  const fmt = (v, suf = "") => v == null ? "–" : v + suf;
+  const rows = games.map(g => `<tr>
+    <td><a href="https://lichess.org/${esc(g.game_id)}" target="_blank" rel="noopener">${esc(g.game_id)}</a></td>
+    <td>${esc(g.speed)}</td><td>${esc(g.color)}</td><td>${fmt(g.rating)}</td>
+    <td>${esc(g.opponent)} (${fmt(g.opponent_rating)})</td><td>${esc(g.result)}</td>
+    <td>${fmt(g.accuracy, "%")}</td><td>${fmt(g.acpl)}</td><td>${fmt(g.engine_match_rate != null ? Math.round(g.engine_match_rate * 100) : null, "%")}</td>
+    <td>${fmt(g.avg_move_time, "s")}</td><td>${fmt(g.time_cv)}</td><td>${g.signal_count || ""}</td></tr>`).join("");
+  return `<div class="panel"><b>Games</b><div class="tablewrap"><table>
+    <tr><th>Game</th><th>Speed</th><th>Side</th><th>Rating</th><th>Opponent</th><th>Result</th>
+        <th>Accuracy</th><th>ACPL</th><th>Engine match</th><th>Avg time</th><th>Time CV</th><th>Flags</th></tr>
+    ${rows}</table></div></div>`;
+}
+</script>
+</body>
+</html>
