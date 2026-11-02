@@ -30,6 +30,12 @@ export LICHESS_TOKEN=lip_xxx
 
 ## Run it
 
+**Easiest:** install Python from https://www.python.org/downloads/ (on Windows tick
+**"Add python.exe to PATH"** in the installer), then double-click `run.bat` (Windows) or run `./run.sh`
+(Mac/Linux). It sets everything up and opens http://localhost:8000.
+
+Manual setup:
+
 ```bash
 python3 -m venv .venv
 .venv/bin/pip install -r requirements.txt
